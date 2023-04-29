@@ -2,11 +2,15 @@
 
 Porkbun DynDNS is a simple, lightweight service that connects to the Porkbun.com API to update a specified domain or subdomain with the local network IP address of the machine it is running on. This can be helpful in creating a dynamic DNS service for your domain registered with Porkbun.
 
+- Great for mobile development and testing (point at local server)
+- Great for home servers on dynamic IP addresses.
+
 ## Requirements
 
 - Go 1.16 or later
 - A Porkbun account with a registered domain
 - Porkbun API key and secret
+- Domain registered with Porkbun.com
 
 ## Installation
 
@@ -72,7 +76,6 @@ The service operates in a loop and performs the following tasks:
 
 1. Every minute, the service checks if your local IP address has changed. If a change is detected, it updates your domain's DNS record with the new local IP address. This ensures that your domain always points to the correct IP address, even if your local IP address changes frequently.
 2. Every 10 minutes, the service fetches the current DNS record from Porkbun and verifies if the IP address on the Porkbun side has changed. If it detects a change in the IP address on Porkbun's side, it updates the domain's DNS record with the current local IP address. This additional check helps maintain the consistency between the local IP address and the DNS record in case of any discrepancies.
-Throughout its operation, the service logs relevant information, such as detected IP address changes, errors that occur while fetching the local IP address or updating the domain, and successful domain updates. This provides transparency into the service's activities and helps you track its progress and performance.
 
 ## Contributing
 

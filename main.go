@@ -24,6 +24,7 @@ type PBDynDNSService struct {
 	Subdomain    string
 	ID           string
 	FQDN         string
+	IsLocal      bool
 }
 
 type PorkbunResponse struct {
@@ -31,13 +32,14 @@ type PorkbunResponse struct {
 	Message string `json:"message"`
 }
 
-func NewPB(apikey, secretapikey, domain, subdomain string) *PBDynDNSService {
+func NewPB(apikey, secretapikey, domain, subdomain string, isLocal bool) *PBDynDNSService {
 	pb := &PBDynDNSService{
 		APIKey:       apikey,
 		SecretAPIKey: secretapikey,
 		Domain:       domain,
 		Subdomain:    subdomain,
 		FQDN:         domain,
+		IsLocal:      isLocal,
 	}
 
 	if pb.Subdomain != "" {
@@ -58,6 +60,7 @@ func main() {
 
 	// Parse command-line arguments
 	daemonFlag := flag.Bool("d", false, "Run as a daemon")
+	localFlag := flag.Bool("local", false, "Use local network IP")
 	apiKeyFlag := flag.String("api-key", "", "Porkbun API key")
 	apiSecretFlag := flag.String("api-secret", "", "Porkbun API secret")
 	domainFlag := flag.String("domain", "", "Domain to update")
@@ -69,22 +72,25 @@ func main() {
 	apiSecret := getArgOrEnv(*apiSecretFlag, "PORKBUN_API_SECRET")
 	domain := getArgOrEnv(*domainFlag, "PBDYNDNS_DOMAIN")
 	subdomain := getArgOrEnv(*subdomainFlag, "PBDYNDNS_SUBDOMAIN")
+	isLocal := *localFlag || os.Getenv("PBDYNDNS_LOCAL") == "true"
+
+	if apiKey == "" {
+		log.Fatalln("No API key specified")
+	}
+
+	if apiSecret == "" {
+		log.Fatalln("No API secret specified")
+	}
 
 	if domain == "" {
 		domain = os.Getenv("DOMAIN")
 	}
-	if domain == "" {
-		panic("No domain specified")
-	}
 
-	// Obtain the local IP address
-	localIP, err := getLocalIP()
-	if err != nil {
-		panic(err)
+	if domain == "" {
+		log.Fatalln("No domain specified")
 	}
 
 	fmt.Println("Porkbun DynDNS service started. Press Ctrl+C to exit.")
-	fmt.Printf("Local IP address: %s\n", localIP)
 
 	// Check if the service should run as a daemon
 	if *daemonFlag || os.Getenv("PBDYNDNS_DAEMON") == "true" {
@@ -100,7 +106,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	pb := NewPB(apiKey, apiSecret, domain, subdomain)
+	pb := NewPB(apiKey, apiSecret, domain, subdomain, isLocal)
 
 	dnsRecord, err := pb.GetRecord()
 	if err != nil && errors.Is(err, criticalError) {
@@ -109,15 +115,32 @@ func main() {
 
 	if dnsRecord != nil {
 		pb.ID = dnsRecord.ID
+		fmt.Printf("Found existing DNS record: %s -> %s\n", pb.FQDN, dnsRecord.Content)
 	}
 
-	// Update the domain using the Porkbun API
-	err = pb.Update(localIP)
+	// Obtain the local IP address
+	ipAddr, err := pb.IP()
 	if err != nil {
 		panic(err)
 	}
-	log.Printf("Successfully updated domain %s -> %s\n", pb.FQDN, localIP)
-	pb.Run(localIP)
+
+	var s string = ""
+	if isLocal {
+		s = "Local "
+	}
+	fmt.Printf("%sIP address: %s\n", s, ipAddr)
+
+	// Update the domain using the Porkbun API
+	if dnsRecord.Content == ipAddr {
+		fmt.Println("Domain is already up-to-date. Skipping update.")
+	} else {
+		err = pb.Update(ipAddr)
+		if err != nil {
+			panic(err)
+		}
+		log.Printf("Successfully updated domain %s -> %s\n", pb.FQDN, ipAddr)
+	}
+	pb.Run()
 
 	fmt.Println("Domain updated successfully")
 }
@@ -130,8 +153,27 @@ func getArgOrEnv(arg, envVar string) string {
 	return os.Getenv(envVar)
 }
 
-//getLocalIP finds the local IP address of the machine
-func getLocalIP() (string, error) {
+//IP finds the local IP address of the machine
+func (pb *PBDynDNSService) IP() (string, error) {
+	if !pb.IsLocal {
+		resp, err := http.Get("https://api.ipify.org")
+		if err != nil {
+			return "", fmt.Errorf("%w: failed to get public IP address: %w", criticalError, err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("%w: failed to get public IP address, HTTP status code: %d", criticalError, resp.StatusCode)
+		}
+
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("%w: failed to read public IP address response body: %w", criticalError, err)
+		}
+
+		return string(body), nil
+	}
+
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return "", err
@@ -219,7 +261,6 @@ func (pb *PBDynDNSService) GetRecord() (*DomainRecord, error) {
 	}
 
 	for _, record := range recordsResp.Records {
-		fmt.Println(record.Name, record.Name == pb.FQDN && record.Type == "A", record.Type, record.Content)
 		if record.Name == pb.FQDN && record.Type == "ALIAS" || record.Name == "CNAME" {
 			err = pb.Delete(record.ID)
 			if errors.Is(err, criticalError) {
@@ -301,9 +342,6 @@ func (pb *PBDynDNSService) Update(localIP string) error {
 	}
 
 	data, err := json.Marshal(payload)
-
-	fmt.Println(string(data))
-
 	if err != nil {
 		log.Println("unable to marshal request")
 		return err
@@ -342,50 +380,27 @@ type DNSRecordsResponse struct {
 }
 
 //Run runs the service in a loop, checking for IP changes every minute
-func (pb *PBDynDNSService) Run(startIP string) {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-
+func (pb *PBDynDNSService) Run() {
 	dnsTicker := time.NewTicker(10 * time.Minute)
-
-	var lastIP string = startIP
 
 	for {
 		select {
 		case <-dnsTicker.C:
-			localIP, err := getLocalIP()
+			ipAddr, err := pb.IP()
 			record, err := pb.GetRecord()
 			pb.ID = record.ID
 			if err != nil || record == nil {
 				log.Printf("Error getting DNS record: %v\n", err)
-				err = pb.Update(localIP)
-			}
-			if record.Content != localIP {
-				log.Printf("IP address on Porkbun has changed: %s -> %s\n", localIP, record.Content)
-			}
-			err = pb.Update(localIP)
-			if err != nil {
-				log.Printf("Error updating domain: %v\n", err)
-			} else {
-				log.Printf("Domain updated successfully: %s -> %s\n", pb.FQDN, localIP)
-				lastIP = localIP
-			}
-		case <-ticker.C:
-			localIP, err := getLocalIP()
-			if err != nil {
-				log.Printf("Error getting local IP: %v\n", err)
+				err = pb.Update(ipAddr)
 				continue
 			}
-
-			// Check if the network IP has changed
-			if localIP != lastIP {
-				log.Printf("IP address changed: %s -> %s\n", lastIP, localIP)
-				err = pb.Update(localIP)
+			if record.Content != ipAddr {
+				log.Printf("IP address does not match, have: %s want: %s\n", ipAddr, record.Content)
+				err = pb.Update(ipAddr)
 				if err != nil {
 					log.Printf("Error updating domain: %v\n", err)
 				} else {
-					log.Printf("Domain updated successfully: %s -> %s\n", pb.FQDN, localIP)
-					lastIP = localIP
+					log.Printf("Domain updated successfully: %s -> %s\n", pb.FQDN, ipAddr)
 				}
 			}
 		}

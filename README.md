@@ -3,6 +3,7 @@
 Porkbun DynDNS is a simple, lightweight service that connects to the Porkbun.com API to update a specified domain or subdomain with the local network IP address of the machine it is running on. This can be helpful in creating a dynamic DNS service for your domain registered with Porkbun.
 
 - Great for mobile development and testing (point at local server)
+  - Use local flags to run on a local network
 - Great for home servers on dynamic IP addresses.
 
 ## Requirements
@@ -41,7 +42,7 @@ You can configure Porkbun DynDNS using command-line arguments, environment varia
 Run the binary with the necessary arguments:
 
 ```bash
-./porkbun-dyndns --api-key <your_porkbun_api_key> --api-secret <your_porkbun_api_secret> --domain <your_domain> [--subdomain <your_subdomain>] [-d]
+./porkbun-dyndns --api-key <your_porkbun_api_key> --api-secret <your_porkbun_api_secret> --domain <your_domain> [--subdomain <your_subdomain>] [-d] [--local]
 ```
 
 Replace <your_porkbun_api_key>, <your_porkbun_api_secret>, <your_domain>, <your_subdomain> with your Porkbun API key, API secret, domain, and subdomain, respectively. The subdomain and daemon flags are optional.
@@ -56,10 +57,11 @@ PORKBUN_API_SECRET=<your_porkbun_api_secret>
 PBDYNDNS_DOMAIN=<your_domain>
 PBDYNDNS_SUBDOMAIN=<your_subdomain> (optional)
 PBDYNDNS_DAEMON=true (optional)
+PBDYNDNS_LOCAL=true (optional)
 ```
-Replace <your_porkbun_api_key>, <your_porkbun_api_secret>, <your_domain>, and <your_subdomain> with your Porkbun API key, API secret, domain, and subdomain, respectively. The subdomain and daemon settings are optional.
+Replace <your_porkbun_api_key>, <your_porkbun_api_secret>, <your_domain>, and <your_subdomain> with your Porkbun API key, API secret, domain, and subdomain, respectively. The subdomain, daemon and local settings are optional.
 
-2. Alternatively, you can set environment variables PORKBUN_API_KEY, PORKBUN_API_SECRET, PBDYNDNS_DOMAIN, PBDYNDNS_SUBDOMAIN, and PBDYNDNS_DAEMON with the respective values.
+2. Alternatively, you can set environment variables PORKBUN_API_KEY, PORKBUN_API_SECRET, PBDYNDNS_DOMAIN, PBDYNDNS_SUBDOMAIN, PBDYNDNS_DAEMON and PBDYNDNS_LOCAL with the respective values.
 
 ### Combining Command-Line Arguments and Environment Variables
 
@@ -71,11 +73,16 @@ Run the binary with the configuration set using command-line arguments or enviro
 
 To run as a daemon, use the -d flag or set the PBDYNDNS_DAEMON environment variable to true.
 
-The Porkbun DynDNS service runs in the background, continuously monitoring the local IP address of your machine and updating the specified domain or subdomain with the local IP address whenever it changes.
-The service operates in a loop and performs the following tasks:
+To use your local ip address, instead of your public address, set the PBDYNDNS_LOCAL environment variable to true.
 
-1. Every minute, the service checks if your local IP address has changed. If a change is detected, it updates your domain's DNS record with the new local IP address. This ensures that your domain always points to the correct IP address, even if your local IP address changes frequently.
-2. Every 10 minutes, the service fetches the current DNS record from Porkbun and verifies if the IP address on the Porkbun side has changed. If it detects a change in the IP address on Porkbun's side, it updates the domain's DNS record with the current local IP address. This additional check helps maintain the consistency between the local IP address and the DNS record in case of any discrepancies.
+The Porkbun DynDNS service runs in the background, continuously monitoring the client side IP address and updates the specified domain or subdomain whenever it changes.
+The service operates in the background and performs the following tasks:
+
+2. Every 10 minutes, the service fetches the current DNS record from Porkbun and verifies if the IP address on the Porkbun side or client side has changed. If a change is detected, the DNS record will be updated.
+
+## Notes
+
+- Connects to https://api.ipify.org to retrieve your public IP address. If you would like to use something else, you can change the URL in the code.
 
 ## Contributing
 

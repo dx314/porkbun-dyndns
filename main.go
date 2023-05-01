@@ -387,7 +387,15 @@ func (pb *PBDynDNSService) Run() {
 		select {
 		case <-dnsTicker.C:
 			ipAddr, err := pb.IP()
+			if err != nil {
+				log.Println(err)
+				continue
+			}
 			record, err := pb.GetRecord()
+			if err != nil {
+				log.Println(err)
+				continue
+			}
 			pb.ID = record.ID
 			if err != nil || record == nil {
 				log.Printf("Error getting DNS record: %v\n", err)
